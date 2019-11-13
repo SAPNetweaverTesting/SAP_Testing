@@ -1,0 +1,543 @@
+On Error Resume Next
+'##################################################################################################
+'Function Name: ExportDataFromTable(FileName)
+'Purpose/Description: This function is used to export data from SAP tables to file system objects 
+'					based on the extention provided in FileName field in the local data table.
+'Parameters: FileName
+'Output:
+'How to use: Call ExportDataFromTable(FileName)
+'Author: PwC India – Automation Team (Deepshikha Khater)
+'Creation Date: 5-04-2019
+'Last Updated: 11-04-2019
+
+Function ExportDataFromTable(FileName)
+
+ResPath=Environment.Value("ResultDir")&"\Report"
+ActnName=Environment.Value("ActionName")
+FolderName=DataTable.Value("FolderName",ActnName)
+
+Set fso = CreateObject("Scripting.FileSystemObject")
+If not(fso.FolderExists(ResPath&"\"&FolderName)) Then
+	fso.CreateFolder(ResPath&"\"&FolderName)
+End if
+Set fso=nothing
+
+If Instr(FileName,".xlsx")>0 OR  Instr(FileName,".xls")>0 Then
+	SAPGuiSession("type:=.*GuiSession").SAPGuiWindow("type:=GuiMainWindow").SAPGuiMenubar("type:=GuiMenubar").Select "List;Export;Spreadsheet..."
+'	SAPGuiSession("type:=.*GuiSession").SAPGuiWindow("type:=GuiMainWindow").SendKey SHIFT_F4
+	SAPGuiSession("type:=.*GuiSession").SAPGuiWindow("text:=Select Spreadsheet").SAPGuiButton("text:=Continue").Click
+ElseIf Instr(FileName,".txt")>0 then 
+	SAPGuiSession("type:=.*GuiSession").SAPGuiWindow("type:=GuiModalWindow").SAPGuiRadioButton("type:=GuiRadioButton","attachedtext:=Text with Tabs").Set()
+	SAPGuiSession("type:=.*GuiSession").SAPGuiWindow("type:=GuiModalWindow").SAPGuiButton("text:=Continue").Click
+Else
+	Reporter.ReportEvent micFail,"Download of file failed","File extention not handled in code"
+End If
+
+SAPGuiSession("type:=.*GuiSession").SAPGuiWindow("type:=GuiModalWindow").SAPGuiEdit("attachedtext:=Directory").Set ResPath&"\"&FolderName
+SAPGuiSession("type:=.*GuiSession").SAPGuiWindow("type:=GuiModalWindow").SAPGuiEdit("attachedtext:=File Name").Set ActnName&"_"&FileName
+SAPGuiSession("type:=.*GuiSession").SAPGuiWindow("type:=GuiModalWindow").SAPGuiButton("text:=Generate").Click
+
+Call KillProgramByProcess("Excel.exe")
+wait(3)
+End Function
+
+'##################################################################################################
+
+
+Function KillProgramByProcess(strProgramName)
+	wait(3)
+	Dim objshell
+	Set objshell=CreateObject("WScript.Shell")
+	objshell.Run "TASKKILL /F /IM "& strProgramName
+	Set objshell=nothing
+
+End Function
+
+'##################################################################################################
+'Function Name: Capture_StatusBarMessage()
+'Purpose/Description: This function is used to capture Status Bar message along with the message Type				
+'Parameters: 
+'Output:
+'How to use: Call Capture_StatusBarMessage()
+'Author: PwC India – Automation Team (Deepshikha Khater)
+'Creation Date: 5-04-2019
+'Last Updated: 5-04-2019
+
+Function Capture_StatusBarMessage()
+On Error Resume Next
+'Get current row from the last Action
+DataTable.GetSheet(Environment.Value("ActionName"))
+ActnRow=DataTable.GetCurrentRow()
+
+StatusBarMessage=SAPGuiSession("type:=.*GuiSession").SAPGuiWindow("type:=GuiMainWindow").SAPGuiStatusBar("name:=sbar").GetROProperty("text")
+msgType=SAPGuiSession("type:=.*GuiSession").SAPGuiWindow("type:=GuiMainWindow").SAPGuiStatusBar("name:=sbar").GetROProperty("messagetype")
+DataTable.SetCurrentRow(DataTable.GetSheet(dtGlobalSheet).GetRowCount+1)
+DataTable.value("ActionName",dtGlobalSheet)=Environment.Value("ActionName")
+DataTable.value("StatusBarMsg",dtGlobalSheet)=StatusBarMessage
+If Environment.Value("Status_Message")="" Then
+Environment.Value("Status_Message")=StatusBarMessage
+End  If
+DataTable.value("MsgType",dtGlobalSheet)=msgType
+
+'Set the current row in local Action data Table
+DataTable.SetCurrentRow(ActnRow)
+
+End Function
+'##################################################################################################
+
+
+Function readData_OutputFile(file_path, col_names)
+Call KillProgramByProcess("Excel.exe")
+	wait(3)
+	Dim objExcel : Set ObjExcel=CreateObject("Excel.Application")
+	
+	With objExcel 
+		.DisplayAlerts = false
+		.Visible = false
+	End With
+	
+	Dim wb: set wb = objExcel.Workbooks.Open(file_path)  
+	Dim sh: set sh = wb.Worksheets(1) 
+	
+	Dim output_str : output_str = ""
+	
+	For cCol = 1 to sh.usedrange.columns.Count
+		If (ucase(sh.cells(1,cCol).value) = ucase(DataTable.value("primaryKey",Environment.Value("ActionName")))) Then
+			myPrimarykey = cCol			
+		End If		
+	Next
+	
+	For cRow = 2 to sh.usedrange.rows.Count
+	If(Ucase(sh.cells(cRow, myPrimaryKey).value)) <> "" Then
+	  For cCol = 1 to sh.usedrange.columns.Count
+	   
+		  If Ucase(col_names) <> "ALL" Then
+		     For each colName IN split(col_names, ",")
+	            If Ucase(Trim(colName)) = Ucase(sh.cells(1, cCol).value) Then
+	                output_str = output_str + "|" & sh.cells(1, cCol).value & "[" & sh.cells(cRow, cCol).value & "]" 
+	                Exit For 
+	            End If    
+	         Next
+	      Else
+	         output_str = output_str + "|" & sh.cells(1, cCol).value & "[" & sh.cells(cRow, cCol).value & "]"          
+		  End If    	  
+	  Next
+	  
+	  output_str = output_str + vbNewLine
+	  End  If
+	Next
+	
+	readData_OutputFile = output_str
+	
+	wb.Close False
+	objExcel.DisplayAlerts = True
+	objExcel.Quit :	Set objExcel = nothing
+End Function
+
+'##################################################################################################
+'Function Name: get_AccountNumber(file_path)
+'Purpose/Description: This function is used to retrieve the Last "G/l"  or "ProfitCenter" or "CostCenter" Account Number created.				
+'Parameters: file_path
+'Output: Last Created Account Number
+'How to use: Call get_AccountNumber(file_path)
+'Author: PwC India – Automation Team (Deepshikha Khater)
+'Creation Date: 12-04-2019
+'Last Updated: 15-04-2019
+'##################################################################################################
+Function get_AccountNumber(file_path)
+
+Set fso=CreateObject("Scripting.FileSystemObject")
+Set textfile=fso.OpenTextFile(file_path)
+	
+Do  Until textfile.AtEndOfStream
+	str=textfile.ReadLine
+Loop
+str=split(str,vbTab)
+LastAccntNo=str(1)
+AccNo=inc_No(str(1))
+get_AccountNumber=AccNo
+	
+End Function
+
+'##################################################################################################
+'Function Name: inc_No(str)
+'Purpose/Description: This function is used to increase the number by 1 for both numeric and alphanumeric string				
+'Parameters: str
+'Output: 
+'How to use: Call inc_No(str)
+'Author: PwC India – Automation Team (Deepshikha Khater)
+'Creation Date: 12-04-2019
+'Last Updated: 12-04-2019
+'##################################################################################################
+Function inc_No(str)
+	
+Dim Num:Num=""
+Dim data:data=""
+For i = 1 To len(str)
+	str1=mid(str,i,1)
+	If IsNumeric(str1) Then
+	  Num=Num&str1
+	  	If i=len(str) Then
+	  		NLength=len(Num)
+			Num=cdbl(Num)+1
+			For z = 1 To NLength-len(Num)
+				Num="0"&Num
+			Next
+		End  If
+	else
+		If Num<>"" Then
+		 	If i=len(str) Then
+				str1=cdbl(Num)+1&str1
+				Num=""
+			Else
+				str1=Num&str1
+				Num=""
+			End  If
+		End If
+		data=data&str1
+	End If
+Next
+inc_No=data&num
+End Function
+
+''Save Data from SAP table to Excel
+'Function SaveTableDataToExcel(FileName)	
+'
+'On Error Resume Next
+'
+'file_path = Environment.Value("ResultDir") & "\Report\" & DataTable.Value("FolderName",Environment.Value("ActionName"))
+'file_name= Environment.Value("ActionName") & "_" &FileName
+'
+'Set fso = CreateObject("Scripting.FileSystemObject")
+'If not(fso.FolderExists(file_path)) Then
+'	fso.CreateFolder(file_path)
+'End if
+'Set fso=nothing
+'
+'Dim objExcel : Set ObjExcel=CreateObject("Excel.Application")
+'With objExcel 
+'	.DisplayAlerts = false
+'	.Visible = true
+'End With
+'    
+'Dim wb: set wb = objExcel.Workbooks.Add()
+'Dim sh: set sh = wb.Worksheets(1) 
+'rCount=SAPGuiSession("type:=.*GuiSession").SAPGuiWindow("type:=GuiMainWindow").SAPGuiTable("type:=GuiTableControl").RowCount()
+'tCount=SAPGuiSession("type:=.*GuiSession").SAPGuiWindow("type:=GuiMainWindow").SAPGuiTable("type:=GuiTableControl").ColumnCount()
+'For i = 0 To tCount-1
+'
+'	Title=SAPGuiSession("type:=.*GuiSession").SAPGuiWindow("type:=GuiMainWindow").SAPGuiTable("type:=GuiTableControl").object.columns.item(i).title
+'	ObjExcel.Cells(1,i+1).Value=Title
+'	For j = 1 To rCount
+''	 On Error Resume Next
+'		ObjExcel.Cells(j+1,i+1).Value=SAPGuiSession("type:=.*GuiSession").SAPGuiWindow("type:=GuiMainWindow").SAPGuiTable("type:=GuiTableControl").GetCellData(j,Title) 
+'		If err.number <> 0 Then err.clear	
+''         On Error Goto 0
+'	Next
+'		
+'Next
+'
+'wb.SaveAs(file_path&"\"&file_name)
+'wb.Close False
+'objExcel.DisplayAlerts = True
+'objExcel.Quit :    Set objExcel = nothing
+'
+'End Function
+
+Function StatusBarOutValue()
+
+If SAPGuiSession("type:=GuiSession").SAPGuiWindow("type:=GuiMainWindow").SAPGuiStatusBar("name:=sbar").GetROProperty("messagetype")<>"S" Then
+	Reporter.ReportEvent micFail, "Status Bar Message","Document Number and company code is not generated"
+else
+	StatusBarText=SAPGuiSession("type:=GuiSession").SAPGuiWindow("type:=GuiMainWindow").SAPGuiStatusBar("name:=sbar").GetROProperty("text")
+	Set RegEx = CreateObject("vbscript.regexp") 
+	RegEx.Pattern = "[^\d\s]"
+	RegEx.IgnoreCase = True 
+	RegEx.Global = True 
+	
+	 For each text IN split(trim(RegEx.Replace(StatusBarText, ""))," ")
+	    If Trim(text) <>"" Then
+	    	out_string=out_string & "|" &text
+	    End  If
+	Next
+	Total_items=split(out_string,"|")
+	DocNo=Total_items(1)
+	CompanyCode=Total_items(2)
+	
+	DataTable.Value("out_DocumentNo",Environment.Value("ActionName"))=DocNo
+	DataTable.Value("out_CompanyCode",Environment.Value("ActionName"))=CompanyCode
+	End If
+
+End Function
+
+Function DeleteMaterial(MaterialNumber)
+
+SAPGuiSession("type:=GuiSession.*").SAPGuiWindow("type:=GuiMainWindow").SAPGuiOKCode("name:=okcd").Set "VD52"
+SAPGuiSession("type:=GuiSession.*").SAPGuiWindow("type:=GuiMainWindow").SendKey ENTER
+SAPGuiSession("type:=GuiSession.*").SAPGuiWindow("type:=GuiMainWindow").SendKey F8
+
+rCount=SAPGuiSession("type:=GuiSession.*").SAPGuiWindow("type:=GuiMainWindow").SAPGuiTable("type:=GuiTableControl").RowCount()
+ For i = 1 To rCount
+ 	If 	SAPGuiSession("type:=GuiSession.*").SAPGuiWindow("type:=GuiMainWindow").SAPGuiTable("type:=GuiTableControl").GetCellData(i,"Material No.")=MaterialNumber Then
+		 SAPGuiSession("type:=GuiSession.*").SAPGuiWindow("type:=GuiMainWindow").SAPGuiTable("type:=GuiTableControl").SelectRow i
+		  SAPGuiSession("type:=GuiSession.*").SAPGuiWindow("type:=GuiMainWindow").SendKey SHIFT_F2
+		  SAPGuiSession("type:=GuiSession.*").SAPGuiWindow("type:=GuiModalWindow").SAPGuiButton("text:=Yes").Click
+		  SAPGuiSession("type:=GuiSession.*").SAPGuiWindow("type:=GuiMainWindow").SendKey F11
+		 Exit for
+ 	End If	
+ Next
+End Function
+
+'##################################################################################################
+'Function Name: ValidateExportedDataFromTable(FilePath ,FileValue1,FileValue2)
+'Purpose/Description: This function is used to validate the exported data from SAP tables to file system objects 
+'					based on the extention provided in FileName field in the local data table.
+'Parameters: FileName,FileValue1,FileValue2
+'Output:
+'How to use: Call ValidateExportedDataFromTable(FilePath ,FileValue1,FileValue2)
+'Author: PwC India – Automation Team (Payel Saha)
+'Creation Date: 6-04-2019
+'Last Updated: 
+'##################################################################################################
+Function ValidateExportedDataFromTable(FilePath ,FileValue1,FileValue2)
+	Dim objExcel : Set ObjExcel=CreateObject("Excel.Application")
+	With objExcel 
+	.DisplayAlerts = false
+	.Visible = false
+	End With
+	
+	Dim wb: set wb = objExcel.Workbooks.Open(FilePath)  
+	Dim sh: set sh = wb.Worksheets(1) 
+	
+	For cRow = 2 to sh.usedrange.rows.Count
+	If (Ucase(sh.cells(cRow,2).value)) = UCase(FileValue1) AND (Replace((sh.cells(cRow,3).value),"/",".") = FileValue2) Then
+	Reporter.ReportEvent micPass ,"validate "+FileValue1 +" and "+ FileValue2 ,FileValue1 +" and "+ FileValue2 + " are getting displayed as expected data"	
+	Exit For
+	ElseIf cRow = sh.usedrange.rows.Count Then
+	Reporter.ReportEvent micFail ,"validate "+FileValue1 +" and "+ FileValue2 , FileValue1 +" and "+ FileValue2 + " are not matching with expected data"	
+	End If 
+	Next	
+End Function
+
+
+
+'##################################################################################################
+'Function Name: StatusBarOrderNoOutValue
+'Purpose/Description: This function is used to capture order number in status bar				
+'Output: 
+'How to use: Call StatusBarOrderNoOutValue()
+'Author: PwC India – Automation Team (Sougata)
+'Creation Date: 16-05-2019
+'Last Updated: 16-05-2019
+'##################################################################################################
+
+Function StatusBarOrderNoOutValue()
+
+StatusBarText=SAPGuiSession("type:=GuiSession").SAPGuiWindow("type:=GuiMainWindow").SAPGuiStatusBar("name:=sbar").GetROProperty("text")
+Set RegEx = CreateObject("vbscript.regexp") 
+RegEx.Pattern = "[^\d\s]"
+RegEx.IgnoreCase = True 
+RegEx.Global = True 
+
+ For each text IN split(trim(RegEx.Replace(StatusBarText, ""))," ")
+                If Trim(text) <>"" Then
+                out_string=out_string & "|" &text
+                End  If
+Next
+Total_items=split(out_string,"|")
+OrderNo=Total_items(1)
+
+DataTable.Value("out_OrderNo",Environment.Value("ActionName"))=OrderNo  
+
+End Function
+'##################################################################################################
+'Function Name: GetValuefromInformation(NameProperty)
+'Purpose/Description: This function is used to get the value of any Information pop up
+'Parameters: NameProperty
+'Output:
+'How to use: value = GetValuefromInformation(NameProperty)
+'Author: PwC India – Automation Team (Payel Saha)
+'Creation Date: 16-05-2019
+'Last Updated: 
+'##################################################################################################
+Function GetValuefromInformation(NameProperty)
+GetValuefromInformation= SAPGuiSession("type:=GuiSession.*").SAPGuiWindow("text:=Information").SAPGuiEdit("type:=GuiTextField","name:="+NameProperty).GetROProperty("value")
+End Function
+
+'##################################################################################################
+'Function Name: ValidateStatusColorInTable(StatusColor)
+'Purpose/Description: This function is used to validate the icon status (Red,Green Or Yellow)in Table			
+'Parameters: StatusColor
+'Output: 
+'How to use: ValidateStatusColorInTable(StatusColor)
+'Author: PwC India – Automation Team (Deepshikha Khater)
+'Creation Date: 16-05-2019
+'Last Updated: 16-05-2019
+'##################################################################################################
+Function ValidateStatusColorInTable(StatusColor)
+
+Dim app_color : app_color = ""
+For i = 0 To SAPGuiSession("type:=GuiSession.*").SAPGuiWindow("type:=GuiMainWindow").SAPGuiTable("type:=GuiTableControl").RowCount()-1
+	If SAPGuiSession("type:=GuiSession.*").SAPGuiWindow("type:=GuiMainWindow").SAPGuiTable("type:=GuiTableControl").ValidRow(i+1)=True Then
+		If SAPGuiSession("type:=GuiSession.*").SAPGuiWindow("type:=GuiMainWindow").SAPGuiTable("type:=GuiTableControl").object.rows.Item(i).selected=True Then
+			app_color=app_color + right(SAPGuiSession("type:=GuiSession.*").SAPGuiWindow("type:=GuiMainWindow").SAPGuiTable("type:=GuiTableControl").GetCellData(i+1,"Test stat."),"1")+","
+		End If
+	End If
+Next
+app_color=Mid(app_color,1,len(app_color)-1)
+If Instr(1,StatusColor,",")>0 Then
+	StatusColor=split(StatusColor,",")
+	If ubound(split(app_color,","))<>ubound(split(StatusColor,",")) Then
+		Reporter.ReportEvent micFail, "Data Incorrect","The number of selected rows and data entered in the table does not match"
+	else
+		For j = 0 To ubound(split(app_color,","))
+			If UCase(Left(StatusColor(j),1))=app_color(j) Then
+				Reporter.ReportEvent micPass, "Status","The color of status is displayed as "&StatusColor&" for the selected row"
+				else
+				Reporter.ReportEvent micFail, "Status","The color of status is not displayed as "&StatusColor&" for the selected row"
+			End If
+		Next
+	End  If
+Else
+If UCase(Left(StatusColor,1))=app_color Then
+		Reporter.ReportEvent micPass, "Status","The color of status is displayed as "&StatusColor&" for the selected row"
+		else
+		Reporter.ReportEvent micFail, "Status","The color of status is not displayed as "&StatusColor&" for the selected row"
+	End If
+End  If
+
+End Function
+
+Function GetIteration(strDataSheet)	
+
+g_rowcount = DataTable.GetSheet(strDatasheet).GetRowCount
+
+	Datatable.GetSheet(strDataSheet).SetCurrentRow(g_rowcount)
+	sl_no=DataTable.value("Sl_No",strDataSheet)
+	strtemp=Split(sl_no,".")
+	masteriteration=strtemp(0)
+	Environment.Value("TotalIterations") = masteriteration
+	Dim Iterations(10)
+	x = 1
+	j = g_rowcount
+	For k = g_rowcount To 1 Step -x
+		Datatable.GetSheet(strDataSheet).SetCurrentRow(j)
+		sl_no=DataTable.value("Sl_No",strDataSheet)
+		strtemp=Split(sl_no,".")
+		noofchilditer = strtemp(1)
+		If Cint(masteriteration)=Cint(strtemp(0)) Then
+			childiteration = strtemp(1)
+			Iterations(masteriteration) = childiteration
+		End If
+		x = noofchilditer
+		j = j-x
+		'k=j
+		masteriteration = masteriteration - 1
+		If masteriteration = 0 Then
+			Exit For
+		End If
+	Next
+	GetIteration=Iterations
+End Function
+
+
+Function setIterator(sheetname)
+	Environment.Value("Status_Message")=""
+	strTemp=Environment.Value("CurrentIteration_Start_Row")
+	For i = 1 To Datatable.GetSheet(dtLocalSheet).GetRowCount
+		Datatable.GetSheet(dtLocalSheet).SetCurrentRow(i)
+		slno=DataTable.value("Sl_No",dtLocalSheet)	
+		If strTemp = slno Then
+			Exit For
+		End If
+	Next
+	setIterator=i
+End Function
+
+
+Function InitResult()
+	On error resume next
+	orpath=split(Environment.Value("TestDir"),"ALL_TESTS")(0) & "\SHARED_FILES\SHARED_OBJ_REPO\Common_OR.tsr"
+	RepositoriesCollection.Add orpath
+	col=empty
+	Select Case Ucase(Environment.value("ActionName"))
+		Case "VA01_CREATE SALES ORDER"			col=split("Sales_Order_Number,Result,Error_Message,Status_Bar_Message,Result_Path",",")
+		Case "VL10H_CREATE BILLING DOCUMENT"	col=split("Billing_Document",",")
+		Case "VA01_CREATE CONSIGNMENT ORDER"	col=split("Consignment_Order_Number,Result,Error_Message,Status_Bar_Message,Result_Path",",")
+		Case "VA41_CREATE CONTRACT ORDER"		col=split("Contract_Order_Number,Result,Error_Message,Status_Bar_Message,Result_Path",",")
+		
+		Case "ME21N_CREATE_PURCHASE_ORDER"		col=split("Purchase_Order_Number,Result,Error_Message,Status_Bar_Message,Result_Path",",")
+		
+		Case "ME11_CREATE_PURCHASE_INFO_RECORD"	col=split("Purchase_Info_Number",",")
+		
+		Case "CK24_MARK_RELEASE"				col=split("Release_Msg",",")
+	
+		Case "MM01_CREATE_MATERIAL_MASTER"		col=split("MaterialNo,Result,Error_Message,Status_Bar_Message,Result_Path",",")
+	End Select
+	strsheet=Datatable.GetSheet("Result").Name
+	If Err.Number<>0 Then
+		DataTable.AddSheet "Result"	    
+	    Err.Number=0
+	End If
+	newcol=""
+	If IsEmpty(col)=False Then
+		paramCount=DataTable.GetSheet("Result").GetParameterCount
+		For cntr1=0 to UBound(col)
+			bFlag=False
+			For cntr=1 to paramCount
+				If DataTable.GetSheet("Result").GetParameter(cntr).Name=col(cntr1) Then
+					bFlag=True
+					Exit for
+				End If				
+			Next
+			If bFlag=False Then
+				newcol=newcol & col(cntr1) & ","
+			End If
+		Next
+		If newcol<>"" Then
+			newcol=split(newcol,",")
+			For cntr=0 to UBound(newcol)-1
+				DataTable.GetSheet("Result").AddParameter newcol(cntr),""
+			Next
+		End If
+	End If
+	Environment.Value("Status_Message")=""
+	 orpath=split(Environment.Value("TestDir"),"ALL_TESTS")(0) & "\SHARED_FILES\SHARED_OBJ_REPO\Common_OR.tsr"
+    		RepositoriesCollection.Add orpath   
+End Function
+
+Function UpdateResult(status,outputValue,statusMessage)
+	DataTable.SetCurrentRow(Cint(Environment.Value("CurrentIteration")))
+	DataTable.value("Result","Result")=status
+	Environment.Value("Result")=status
+	Select Case Ucase(Environment.value("ActionName"))
+		Case "VA01_CREATE SALES ORDER"			DataTable.Value("Sales_Order_Number","Result")=outputValue
+		Case "VL10H_CREATE BILLING DOCUMENT"	DataTable.Value("Billing_Document","Result")=outputValue
+		Case "VA01_CREATE CONSIGNMENT ORDER"	DataTable.Value("Consignment_Order_Number","Result")=outputValue
+		Case "VA41_CREATE CONTRACT ORDER"		DataTable.Value("Contract_Order_Number","Result")=outputValue
+		Case "ME21N_CREATE_PURCHASE_ORDER"		DataTable.Value("Purchase_Order_Number","Result")=outputValue
+		Case "ME11_CREATE_PURCHASE_INFO_RECORD"	DataTable.Value("Purchase_Info_Number","Result")=outputValue
+		Case "CK24_MARK_RELEASE"				DataTable.Value("Release_Msg","Result")=outputValue
+		Case "MM01_CREATE_MATERIAL_MASTER"		DataTable.Value("MaterialNo","Result")=outputValue
+	End Select
+	If status="Fail" Then
+		SnapShotPath = Environment.Value("ResultDir") & "\" & Environment.Value("ActionName") & "_"& Environment.Value("CurrentIteration") & ".png"
+		Desktop.CaptureBitmap SnapShotPath
+		DataTable.value("Status_Bar_Message","Result")=Environment.Value("Status_Message")
+		DataTable.value("Error_Message","Result")=Environment.Value("Status_Message")
+		DataTable.value("Result_Path","Result")=SnapShotPath
+		If statusMessage<>"" Then
+			DataTable.value("Status_Bar_Message","Result")=statusMessage
+		ElseIf Environment.Value("Status_Message")<>"" Then
+			DataTable.value("Status_Bar_Message","Result")=statusMessage
+		End If
+	End If
+End Function
+
+Function IgnoreWarning()
+For Iterator = 1 To Environment.Value("ChildIteration")
+If SAPGuiSession("Session_2").SAPGuiWindow("Information").SAPGuiButton("Continue   (Enter)").Exist(2) Then
+SAPGuiSession("Session_2").SAPGuiWindow("Information").SAPGuiButton("Continue   (Enter)").Click
+End If
+Next
+End Function
